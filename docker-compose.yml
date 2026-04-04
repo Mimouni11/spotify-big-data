@@ -188,6 +188,8 @@ services:
       - MYSQL_USER=spotify_user
       - MYSQL_PASSWORD=spotify_pass
       - KAFKA_BOOTSTRAP=kafka:9092
+      - HIVE_HOST=hive
+      - HIVE_PORT=10000
     volumes:
       - ./app:/app
     networks:
