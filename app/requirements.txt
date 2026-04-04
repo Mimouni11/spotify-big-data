@@ -3,3 +3,7 @@ mysql-connector-python
 kafka-python
 pandas
 gunicorn
+pyhive
+thrift
+thrift-sasl
+pure-sasl

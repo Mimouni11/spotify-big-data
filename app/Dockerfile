@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Install dependencies first (cached layer — only rebuilds if requirements.txt changes)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout=300 --retries=5 -r requirements.txt
 
 # Copy app code
 COPY . .
