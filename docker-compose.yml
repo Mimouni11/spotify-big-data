@@ -1,0 +1,309 @@
+name: spotify-bigdata
+
+# ─────────────────────────────────────────────
+#  SPOTIFY BIG DATA PIPELINE
+#  Services:
+#   1. MySQL          – relational source for Sqoop
+#   2. Namenode       – HDFS master
+#   3. Datanode       – HDFS storage
+#   4. Sqoop          – MySQL → HDFS importer
+#   5. Zookeeper      – required by Kafka
+#   6. Kafka          – real-time stream
+#   7. Flask App      – dashboard backend
+#   8. Nginx          – reverse proxy + log generator for Flume
+#   9. Flume          – Nginx logs → HDFS
+#  10. Hive           – SQL queries on HDFS
+# ─────────────────────────────────────────────
+
+networks:
+  spotify-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  hadoop_namenode:
+  hadoop_datanode:
+  nginx_logs:          # shared between Nginx and Flume
+
+# ─────────────────────────────────────────────
+
+services:
+
+  # ── 1. MySQL ────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: spotify_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: spotify_db
+      MYSQL_USER: spotify_user
+      MYSQL_PASSWORD: spotify_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./data/init.sql:/docker-entrypoint-initdb.d/init.sql   # auto-creates tables on first run
+    networks:
+      - spotify-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 2. HDFS Namenode ────────────────────────
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: spotify_namenode
+    restart: unless-stopped
+    environment:
+      - CLUSTER_NAME=spotify-cluster
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    ports:
+      - "9870:9870"   # Namenode Web UI
+      - "9000:9000"   # HDFS RPC
+    volumes:
+      - hadoop_namenode:/hadoop/dfs/name
+    networks:
+      - spotify-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9870"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── 3. HDFS Datanode ────────────────────────
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: spotify_datanode
+    restart: unless-stopped
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      - hadoop_datanode:/hadoop/dfs/data
+    networks:
+      - spotify-net
+    depends_on:
+      - namenode
+
+  # ── 3b. YARN ResourceManager ─────────────────
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: spotify_resourcemanager
+    restart: unless-stopped
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - YARN_CONF_yarn_resourcemanager_hostname=resourcemanager
+    ports:
+      - "8088:8088"   # YARN Web UI
+    networks:
+      - spotify-net
+    depends_on:
+      - namenode
+
+  # ── 3c. YARN NodeManager ───────────────────
+  nodemanager:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: spotify_nodemanager
+    restart: unless-stopped
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - YARN_CONF_yarn_resourcemanager_hostname=resourcemanager
+      - MAPRED_CONF_mapreduce_framework_name=yarn
+      - MAPRED_CONF_yarn_app_mapreduce_am_env=HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1
+      - MAPRED_CONF_mapreduce_map_env=HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1
+      - MAPRED_CONF_mapreduce_reduce_env=HADOOP_MAPRED_HOME=/opt/hadoop-3.2.1
+      - YARN_CONF_yarn_nodemanager_aux__services=mapreduce_shuffle
+      - YARN_CONF_yarn_nodemanager_aux__services_mapreduce__shuffle_class=org.apache.hadoop.mapred.ShuffleHandler
+    networks:
+      - spotify-net
+    depends_on:
+      - resourcemanager
+
+  # ── 4. Sqoop ────────────────────────────────
+  # Sqoop runs as a one-shot command container.
+  # You exec into it manually to run import commands.
+  sqoop:
+    image: dvoros/sqoop:latest
+    container_name: spotify_sqoop
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    volumes:
+      - ./sqoop:/sqoop                  # mount your import scripts
+    networks:
+      - spotify-net
+    depends_on:
+      - mysql
+      - namenode
+    entrypoint: ["tail", "-f", "/dev/null"]   # keep container alive
+
+  # ── 5. Zookeeper (required by Kafka) ────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: spotify_zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - spotify-net
+
+  # ── 6. Kafka ────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: spotify_kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    networks:
+      - spotify-net
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── 7. Flask Dashboard App ──────────────────
+  flask_app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: spotify_flask
+    restart: unless-stopped
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_DB=spotify_db
+      - MYSQL_USER=spotify_user
+      - MYSQL_PASSWORD=spotify_pass
+      - KAFKA_BOOTSTRAP=kafka:9092
+    volumes:
+      - ./app:/app
+    networks:
+      - spotify-net
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    expose:
+      - "5000"          # internal only, Nginx is the public face
+
+  # ── 8. Nginx ────────────────────────────────
+  nginx:
+    image: nginx:latest
+    container_name: spotify_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"         # visit http://localhost to see the dashboard
+    volumes:
+      - ./app/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx_logs:/var/log/nginx              # shared with Flume
+    networks:
+      - spotify-net
+    depends_on:
+      - flask_app
+
+  # ── 9. Flume ────────────────────────────────
+  flume:
+    image: probablyfine/flume:latest
+    container_name: spotify_flume
+    restart: unless-stopped
+    volumes:
+      - ./flume/flume-agent.conf:/opt/flume/conf/flume-agent.conf:ro
+      - nginx_logs:/var/log/nginx              # reads Nginx access.log from here
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    networks:
+      - spotify-net
+    depends_on:
+      - namenode
+      - nginx
+    command: >
+      flume-ng agent
+      --conf /opt/flume/conf
+      --conf-file /opt/flume/conf/flume-agent.conf
+      --name agent
+      -Dflume.root.logger=INFO,console
+
+  # ── 10. Hive ────────────────────────────────
+  hive:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: spotify_hive
+    restart: unless-stopped
+    environment:
+      - HIVE_SITE_CONF_hive_metastore_uris=thrift://hive-metastore:9083
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - HDFS_CONF_dfs_namenode_rpc__address=namenode:9000
+    ports:
+      - "10000:10000"   # HiveServer2
+      - "10002:10002"   # Hive Web UI
+    volumes:
+      - ./hive:/hive
+    networks:
+      - spotify-net
+    depends_on:
+      - namenode
+      - hive-metastore
+
+  # Hive needs a Postgres metastore
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: spotify_hive_metastore
+    command: /opt/hive/bin/hive --service metastore
+    environment:
+      - SERVICE_PRECONDITION=namenode:9870
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionURL=jdbc:postgresql://hive-metastore-db/metastore
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionDriverName=org.postgresql.Driver
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionUserName=hive
+      - HIVE_SITE_CONF_javax_jdo_option_ConnectionPassword=hive
+      - HIVE_SITE_CONF_datanucleus_autoCreateSchema=false
+      - HIVE_SITE_CONF_hive_metastore_schema_verification=false
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    networks:
+      - spotify-net
+    depends_on:
+      - namenode
+      - hive-metastore-db
+
+  hive-metastore-db:
+    image: bde2020/hive-metastore-postgresql:2.3.0
+    container_name: spotify_hive_metastore_db
+    networks:
+      - spotify-net
+
+# ─────────────────────────────────────────────
+#  QUICK REFERENCE — useful commands
+#
+#  Start everything:
+#    docker-compose up -d
+#
+#  Check all containers running:
+#    docker-compose ps
+#
+#  Run Sqoop import (after data is in MySQL):
+#    docker exec -it spotify_sqoop bash /sqoop/import.sh
+#
+#  Open Hive shell:
+#    docker exec -it spotify_hive hive
+#
+#  Watch Kafka topic:
+#    docker exec -it spotify_kafka kafka-console-consumer \
+#      --bootstrap-server localhost:9092 \
+#      --topic spotify-tracks --from-beginning
+#
+#  HDFS Web UI:   http://localhost:9870
+#  Dashboard:     http://localhost:80
+#  Hive Web UI:   http://localhost:10002
+# ─────────────────────────────────────────────
