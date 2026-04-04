@@ -8,30 +8,31 @@
 --  PART 1: EXTERNAL TABLES (run once)
 -- ═══════════════════════════════════════════════
 
+-- Column order matches Sqoop's alphabetical export
 CREATE EXTERNAL TABLE IF NOT EXISTS tracks (
-  id                INT,
-  track_id          STRING,
-  track_name        STRING,
+  acousticness      FLOAT,
   album_name        STRING,
-  popularity        INT,
-  duration_ms       INT,
-  explicit          BOOLEAN,
   danceability      FLOAT,
+  duration_ms       INT,
   energy            FLOAT,
+  explicit          BOOLEAN,
+  genre_id          INT,
+  id                INT,
+  instrumentalness  FLOAT,
   `key`             INT,
+  liveness          FLOAT,
   loudness          FLOAT,
   `mode`            INT,
+  popularity        INT,
   speechiness       FLOAT,
-  acousticness      FLOAT,
-  instrumentalness  FLOAT,
-  liveness          FLOAT,
-  valence           FLOAT,
   tempo             FLOAT,
   time_signature    INT,
-  genre_id          INT
+  track_id          STRING,
+  track_name        STRING,
+  valence           FLOAT
 )
 ROW FORMAT DELIMITED
-FIELDS TERMINATED BY ','
+FIELDS TERMINATED BY '\t'
 STORED AS TEXTFILE
 LOCATION '/data/spotify/tracks/';
 
@@ -40,7 +41,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS artists (
   artist_name STRING
 )
 ROW FORMAT DELIMITED
-FIELDS TERMINATED BY ','
+FIELDS TERMINATED BY '\t'
 STORED AS TEXTFILE
 LOCATION '/data/spotify/artists/';
 
@@ -49,7 +50,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS genres (
   genre_name STRING
 )
 ROW FORMAT DELIMITED
-FIELDS TERMINATED BY ','
+FIELDS TERMINATED BY '\t'
 STORED AS TEXTFILE
 LOCATION '/data/spotify/genres/';
 
@@ -58,11 +59,15 @@ LOCATION '/data/spotify/genres/';
 --  Copy-paste individual queries as needed
 -- ═══════════════════════════════════════════════
 
--- ── Q1: Top 10 most popular tracks ───────────
-SELECT track_name, popularity
+-- ── Q1: Top 20 most popular tracks (deduplicated) ───────────
+SELECT track_name,
+       MAX(popularity) AS popularity,
+       MAX(energy) AS energy,
+       MAX(danceability) AS danceability
 FROM tracks
+GROUP BY track_name
 ORDER BY popularity DESC
-LIMIT 10;
+LIMIT 20;
 
 -- ── Q2: Average energy by genre ──────────────
 SELECT g.genre_name, ROUND(AVG(t.energy), 3) AS avg_energy
@@ -71,15 +76,16 @@ JOIN genres g ON t.genre_id = g.genre_id
 GROUP BY g.genre_name
 ORDER BY avg_energy DESC;
 
--- ── Q3: Genre stats (count, avg popularity, avg danceability) ──
+-- ── Q3: Genre audio profile (top 15 by avg popularity) ──
 SELECT g.genre_name,
-       COUNT(*)                        AS track_count,
        ROUND(AVG(t.popularity), 1)     AS avg_popularity,
+       ROUND(AVG(t.energy), 3)         AS avg_energy,
        ROUND(AVG(t.danceability), 3)   AS avg_danceability
 FROM tracks t
 JOIN genres g ON t.genre_id = g.genre_id
 GROUP BY g.genre_name
-ORDER BY avg_popularity DESC;
+ORDER BY avg_popularity DESC
+LIMIT 15;
 
 -- ── Q4: Top 10 genres by number of tracks ────
 SELECT g.genre_name, COUNT(*) AS track_count

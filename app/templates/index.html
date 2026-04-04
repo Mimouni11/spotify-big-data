@@ -2,10 +2,148 @@
 {% block title %}Spotify Analytics - Home{% endblock %}
 
 {% block content %}
-<div style="text-align:center; padding: 60px 0;">
+<!-- Hero -->
+<div style="text-align:center; padding: 40px 0 32px;">
     <h1 style="font-size: 2.5rem; margin-bottom: 8px;">Spotify Data Analytics</h1>
     <p style="color: var(--text-secondary); font-size: 1.1rem;">
-        Pipeline is running. Features coming soon.
+        Explore 114K+ tracks across 114 genres powered by a full big data pipeline
     </p>
+    <div style="margin-top: 24px;">
+        <form action="/search" method="GET" style="display:flex; max-width:500px; margin:0 auto; gap:8px;">
+            <input type="text" name="q" class="search-input" placeholder="Search an artist..." autocomplete="off">
+            <button type="submit" class="btn">Search</button>
+        </form>
+    </div>
 </div>
+
+<!-- Stats -->
+<div class="card-grid" style="margin-bottom: 32px;">
+    <div class="stat-card">
+        <div class="value">114K+</div>
+        <div class="label">Tracks</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">29K+</div>
+        <div class="label">Artists</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">114</div>
+        <div class="label">Genres</div>
+    </div>
+</div>
+
+<!-- Top Tracks -->
+<div class="card" style="margin-bottom: 24px;">
+    <h2 class="section-title">Top 20 Most Popular Tracks</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Track</th>
+                <th>Popularity</th>
+                <th>Energy</th>
+                <th>Danceability</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in top_tracks %}
+            <tr>
+                <td style="color: var(--text-muted);">{{ loop.index }}</td>
+                <td>{{ t.track_name }}</td>
+                <td>
+                    <span style="margin-right:8px; color:var(--text-secondary);">{{ t.popularity or 0 }}</span>
+                    <span class="pop-bar"><span class="pop-bar-fill" style="width:{{ t.popularity or 0 }}%"></span></span>
+                </td>
+                <td style="color:var(--text-secondary);">{{ "%.2f"|format(t.energy or 0) }}</td>
+                <td style="color:var(--text-secondary);">{{ "%.2f"|format(t.danceability or 0) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Genre Audio Profile Chart -->
+<div class="card" style="margin-bottom: 24px;">
+    <h2 class="section-title">Top Genres — Audio Profile</h2>
+    <canvas id="genreRadar" height="200"></canvas>
+</div>
+
+<!-- Avg Popularity by Genre -->
+<div class="card">
+    <h2 class="section-title">Average Popularity by Genre</h2>
+    <canvas id="popChart" height="80"></canvas>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const genreData = {{ genre_stats | tojson }};
+
+// Radar chart — audio fingerprint per genre
+new Chart(document.getElementById('genreRadar'), {
+    type: 'radar',
+    data: {
+        labels: genreData.map(g => g.genre_name),
+        datasets: [
+            {
+                label: 'Energy',
+                data: genreData.map(g => g.avg_energy),
+                borderColor: '#E74C3C',
+                backgroundColor: 'rgba(231, 76, 60, 0.15)',
+                pointBackgroundColor: '#E74C3C',
+                borderWidth: 2,
+            },
+            {
+                label: 'Danceability',
+                data: genreData.map(g => g.avg_danceability),
+                borderColor: '#3498DB',
+                backgroundColor: 'rgba(52, 152, 219, 0.15)',
+                pointBackgroundColor: '#3498DB',
+                borderWidth: 2,
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { labels: { color: '#B3B3B3', font: { size: 12 } } }
+        },
+        scales: {
+            r: {
+                angleLines: { color: 'rgba(255,255,255,0.1)' },
+                grid: { color: 'rgba(255,255,255,0.1)' },
+                pointLabels: { color: '#B3B3B3', font: { size: 11 } },
+                ticks: { display: false },
+                suggestedMin: 0,
+                suggestedMax: 1
+            }
+        }
+    }
+});
+
+// Bar chart — avg popularity
+new Chart(document.getElementById('popChart'), {
+    type: 'bar',
+    data: {
+        labels: genreData.map(g => g.genre_name),
+        datasets: [{
+            label: 'Avg Popularity',
+            data: genreData.map(g => g.avg_popularity),
+            backgroundColor: genreData.map((g, i) => {
+                const opacity = 0.4 + (0.6 * (1 - i / genreData.length));
+                return `rgba(29, 185, 84, ${opacity})`;
+            }),
+            borderRadius: 6,
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { ticks: { color: '#B3B3B3', font: { size: 11 } }, grid: { display: false } },
+            y: { ticks: { color: '#B3B3B3' }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: true }
+        }
+    }
+});
+</script>
 {% endblock %}

@@ -192,6 +192,7 @@ services:
       - HIVE_PORT=10000
     volumes:
       - ./app:/app
+      - ./hive:/hive:ro
     networks:
       - spotify-net
     depends_on:
