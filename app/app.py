@@ -34,7 +34,7 @@ def hive_query(query):
     conn = get_hive()
     cursor = conn.cursor()
     cursor.execute(query)
-    columns = [desc[0] for desc in cursor.description]
+    columns = [desc[0].split(".")[-1] for desc in cursor.description]
     rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
     cursor.close()
     conn.close()
@@ -62,29 +62,40 @@ def send_event(event_type, data):
         producer.send("spotify-events", {"event": event_type, **data})
 
 
+# ── Load Hive queries from queries.hql ────────
+HIVE_QUERIES = {}
+
+def load_hive_queries():
+    with open("/hive/queries.hql", "r") as f:
+        content = f.read()
+    # Parse named queries: lines starting with "-- ── Q<n>:" are query headers
+    parts = content.split("-- ── ")
+    for part in parts[1:]:  # skip everything before first query
+        lines = part.strip().split("\n")
+        header = lines[0]  # e.g. "Q1: Top 20 most popular tracks ───────────"
+        name = header.split(":")[0].strip()  # e.g. "Q1"
+        # collect SQL lines (skip header and trailing comment lines)
+        sql_lines = []
+        for line in lines[1:]:
+            if line.startswith("-- ──"):
+                break
+            sql_lines.append(line)
+        sql = "\n".join(sql_lines).strip().rstrip(";")
+        if sql:
+            HIVE_QUERIES[name] = sql
+
+load_hive_queries()
+
+
+def run_hive(query_name):
+    return hive_query(HIVE_QUERIES[query_name])
+
+
 # ── Routes ────────────────────────────────────
 @app.route("/")
 def index():
-    # Top 20 tracks from Hive (HDFS data)
-    top_tracks = hive_query("""
-        SELECT track_name, popularity, energy, danceability
-        FROM tracks
-        ORDER BY popularity DESC
-        LIMIT 20
-    """)
-
-    # Genre stats from Hive (HDFS data)
-    genre_stats = hive_query("""
-        SELECT g.genre_name,
-               COUNT(*) AS track_count,
-               ROUND(AVG(t.popularity), 1) AS avg_popularity
-        FROM tracks t
-        JOIN genres g ON t.genre_id = g.genre_id
-        GROUP BY g.genre_name
-        ORDER BY track_count DESC
-        LIMIT 15
-    """)
-
+    top_tracks = run_hive("Q1")
+    genre_stats = run_hive("Q3")
     return render_template("index.html", top_tracks=top_tracks, genre_stats=genre_stats)
 
 

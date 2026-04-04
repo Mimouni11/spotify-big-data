@@ -1,5 +1,52 @@
 {% extends "base.html" %}
-{% block title %}Search{% endblock %}
+{% block title %}Search Artists{% endblock %}
+
 {% block content %}
-<p>Search page - coming soon</p>
+<!-- Search bar -->
+<div style="text-align:center; padding: 40px 0 32px;">
+    <h1 class="section-title">Search Artists</h1>
+    <form action="/search" method="GET" style="display:flex; max-width:500px; margin:0 auto; gap:8px;">
+        <input type="text" name="q" class="search-input" placeholder="Search an artist..."
+               value="{{ query }}" autocomplete="off" id="searchInput">
+        <button type="submit" class="btn">Search</button>
+    </form>
+</div>
+
+<!-- Results -->
+{% if query %}
+<p style="color: var(--text-secondary); margin-bottom: 16px;">
+    {{ artists|length }} result{{ 's' if artists|length != 1 }} for "<strong style="color:var(--text);">{{ query }}</strong>"
+</p>
+
+{% if artists %}
+<div class="card-grid">
+    {% for a in artists %}
+    <a href="/artist/{{ a.artist_name | urlencode }}" style="text-decoration:none; color:inherit;">
+        <div class="card" style="cursor:pointer; transition: background 0.2s;">
+            <div style="display:flex; align-items:center; gap:16px;">
+                <div style="width:48px; height:48px; border-radius:50%; background:var(--green);
+                            display:flex; align-items:center; justify-content:center;
+                            font-size:1.2rem; font-weight:700; color:#000;">
+                    {{ a.artist_name[0] | upper }}
+                </div>
+                <div>
+                    <div style="font-weight:600; font-size:1.05rem;">{{ a.artist_name }}</div>
+                    <div style="color:var(--text-secondary); font-size:0.85rem;">Artist</div>
+                </div>
+            </div>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card" style="text-align:center; padding:48px;">
+    <p style="color:var(--text-secondary);">No artists found matching "{{ query }}"</p>
+</div>
+{% endif %}
+
+{% else %}
+<div class="card" style="text-align:center; padding:48px;">
+    <p style="color:var(--text-secondary);">Type an artist name above to search our 29K+ artist database</p>
+</div>
+{% endif %}
 {% endblock %}

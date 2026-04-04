@@ -67,7 +67,7 @@ sqoop import \
   --password "$MYSQL_PASS" \
   --table tracks \
   --target-dir "${HDFS_BASE}/tracks" \
-  --fields-terminated-by ',' \
+  --fields-terminated-by '\t' \
   -m 1
 
 # ── Import artists ────────────────────────────
@@ -78,7 +78,7 @@ sqoop import \
   --password "$MYSQL_PASS" \
   --table artists \
   --target-dir "${HDFS_BASE}/artists" \
-  --fields-terminated-by ',' \
+  --fields-terminated-by '\t' \
   -m 1
 
 # ── Import genres ─────────────────────────────
@@ -89,7 +89,7 @@ sqoop import \
   --password "$MYSQL_PASS" \
   --table genres \
   --target-dir "${HDFS_BASE}/genres" \
-  --fields-terminated-by ',' \
+  --fields-terminated-by '\t' \
   -m 1
 
 echo "=== All imports done ==="
