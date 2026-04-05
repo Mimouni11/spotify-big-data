@@ -298,5 +298,49 @@ def kafka_preview():
     return jsonify(messages)
 
 
+WEBHDFS = "http://namenode:9870/webhdfs/v1"
+
+
+@app.route("/flume")
+def flume_page():
+    return render_template("flume.html")
+
+
+@app.route("/flume-data")
+def flume_data():
+    import requests
+    result = {"files": [], "logs": []}
+    try:
+        # List log directories
+        r = requests.get(f"{WEBHDFS}/logs/spotify?op=LISTSTATUS", timeout=5)
+        if r.status_code == 200:
+            dirs = r.json().get("FileStatuses", {}).get("FileStatus", [])
+            for d in sorted(dirs, key=lambda x: x["pathSuffix"], reverse=True)[:5]:
+                date_dir = d["pathSuffix"]
+                # List files in each date dir
+                r2 = requests.get(f"{WEBHDFS}/logs/spotify/{date_dir}?op=LISTSTATUS", timeout=5)
+                if r2.status_code == 200:
+                    files = r2.json().get("FileStatuses", {}).get("FileStatus", [])
+                    for f in files:
+                        result["files"].append({
+                            "date": date_dir,
+                            "name": f["pathSuffix"],
+                            "size": f["length"],
+                        })
+
+        # Read latest log file content
+        if result["files"]:
+            latest = result["files"][0]
+            path = f"/logs/spotify/{latest['date']}/{latest['name']}"
+            r3 = requests.get(f"{WEBHDFS}{path}?op=OPEN&length=4096", timeout=5, allow_redirects=True)
+            if r3.status_code == 200:
+                lines = r3.text.strip().split("\n")
+                result["logs"] = lines[-20:]  # last 20 lines
+    except Exception:
+        pass
+
+    return jsonify(result)
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

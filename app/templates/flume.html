@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Flume — Nginx Logs to HDFS{% endblock %}
+
+{% block content %}
+<div style="text-align:center; padding: 32px 0 24px;">
+    <h1 style="font-size: 2.2rem; margin-bottom: 8px;">Flume Pipeline</h1>
+    <p style="color: var(--text-secondary);">Nginx access logs streamed to HDFS in real-time</p>
+</div>
+
+<!-- Pipeline Diagram -->
+<div class="card" style="margin-bottom:16px; text-align:center; padding:20px;">
+    <div style="display:flex; align-items:center; justify-content:center; gap:12px; font-size:0.9rem; flex-wrap:wrap;">
+        <span style="background:var(--bg); padding:8px 16px; border-radius:6px;">User visits page</span>
+        <span style="color:var(--green);">→</span>
+        <span style="background:var(--bg); padding:8px 16px; border-radius:6px;">Nginx access.log</span>
+        <span style="color:var(--green);">→</span>
+        <span style="background:var(--green); color:#000; padding:8px 16px; border-radius:6px; font-weight:600;">Flume Agent</span>
+        <span style="color:var(--green);">→</span>
+        <span style="background:var(--bg); padding:8px 16px; border-radius:6px;">HDFS /logs/spotify/</span>
+    </div>
+</div>
+
+<!-- HDFS Files -->
+<div class="card" style="margin-bottom:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h2 class="section-title" style="margin-bottom:0;">
+            <span id="flumeDot" style="display:inline-block; width:10px; height:10px; border-radius:50%;
+                  background:var(--green); margin-right:8px; animation: blink 1s infinite;"></span>
+            HDFS Log Files
+        </h2>
+        <button class="btn btn-sm" onclick="loadFlume()">Refresh</button>
+    </div>
+    <table id="fileTable">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>File</th>
+                <th>Size</th>
+            </tr>
+        </thead>
+        <tbody id="fileBody">
+            <tr><td colspan="3" style="color:var(--text-muted);">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Live Log Feed -->
+<div class="card">
+    <h2 class="section-title">Latest Nginx Logs (from HDFS)</h2>
+    <div id="logFeed" style="background:var(--bg); border-radius:8px; padding:16px; max-height:400px;
+         overflow-y:auto; font-family:monospace; font-size:0.75rem;">
+        <span style="color:var(--text-muted);">Loading...</span>
+    </div>
+</div>
+
+<style>
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+function loadFlume() {
+    fetch('/flume-data')
+        .then(r => r.json())
+        .then(data => {
+            // Files table
+            const tbody = document.getElementById('fileBody');
+            if (data.files.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted);">No log files yet. Browse the app to generate traffic.</td></tr>';
+            } else {
+                tbody.innerHTML = data.files.map(f =>
+                    `<tr>
+                        <td style="color:var(--green);">${f.date}</td>
+                        <td>${f.name}</td>
+                        <td style="color:var(--text-secondary);">${formatBytes(f.size)}</td>
+                    </tr>`
+                ).join('');
+            }
+
+            // Log feed
+            const feed = document.getElementById('logFeed');
+            if (data.logs.length === 0) {
+                feed.innerHTML = '<span style="color:var(--text-muted);">No logs captured yet.</span>';
+            } else {
+                feed.innerHTML = '';
+                data.logs.forEach((line, i) => {
+                    const div = document.createElement('div');
+                    div.style.cssText = 'padding:4px 8px; margin-bottom:2px; border-left:2px solid var(--green); opacity:0; transform:translateX(-10px); transition: all 0.3s;';
+
+                    // Parse nginx log line for coloring
+                    const match = line.match(/^(\S+).*\[(.+?)\]\s+"(\S+ \S+).*?" (\d+)/);
+                    if (match) {
+                        const [, ip, time, req, status] = match;
+                        const statusColor = status.startsWith('2') ? 'var(--green)' : '#E74C3C';
+                        div.innerHTML = `<span style="color:var(--text-muted);">${ip}</span> <span style="color:var(--text-secondary);">[${time}]</span> <span style="color:var(--text);">${req}</span> <span style="color:${statusColor};">${status}</span>`;
+                    } else {
+                        div.innerHTML = `<span style="color:var(--text-secondary);">${line}</span>`;
+                    }
+
+                    feed.appendChild(div);
+                    setTimeout(() => { div.style.opacity = '1'; div.style.transform = 'translateX(0)'; }, i * 60);
+                });
+            }
+        })
+        .catch(() => {
+            document.getElementById('fileBody').innerHTML = '<tr><td colspan="3" style="color:#E74C3C;">Failed to connect to HDFS</td></tr>';
+        });
+}
+
+loadFlume();
+setInterval(loadFlume, 15000);
+</script>
+{% endblock %}
