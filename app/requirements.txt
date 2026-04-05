@@ -7,3 +7,4 @@ pyhive
 thrift
 thrift-sasl
 pure-sasl
+requests

@@ -222,6 +222,7 @@
             <a href="/" class="{% if request.path == '/' %}active{% endif %}">Home</a>
             <a href="/search" class="{% if '/search' in request.path %}active{% endif %}">Search</a>
             <a href="/upload" class="{% if '/upload' in request.path or '/personal' in request.path %}active{% endif %}">Upload</a>
+            <a href="/flume" class="{% if '/flume' in request.path %}active{% endif %}">Flume</a>
         </div>
     </nav>
 
