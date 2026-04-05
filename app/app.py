@@ -1,6 +1,10 @@
 import os
 import json
-from flask import Flask, render_template, request, jsonify
+import uuid
+import tempfile
+from collections import defaultdict
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 import mysql.connector
 from pyhive import hive
 from kafka import KafkaProducer
@@ -173,11 +177,113 @@ def artist_page(name):
     return render_template("artist.html", artist=artist, tracks=tracks, stats=stats)
 
 
-@app.route("/play", methods=["POST"])
-def play():
-    data = request.get_json()
-    send_event("play", {"track": data.get("track"), "artist": data.get("artist")})
-    return jsonify({"status": "ok"})
+@app.route("/upload", methods=["GET"])
+def upload_page():
+    return render_template("upload.html")
+
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    files = request.files.getlist("files")
+    if not files:
+        return redirect(url_for("upload_page"))
+
+    # Parse all events from all uploaded JSON files
+    all_events = []
+    for f in files:
+        try:
+            data = json.load(f)
+            if isinstance(data, list):
+                all_events.extend(data)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+
+    if not all_events:
+        return redirect(url_for("upload_page"))
+
+    # Send events to Kafka topic "spotify-personal"
+    producer = get_producer()
+    if producer:
+        for event in all_events:
+            producer.send("spotify-personal", event)
+        producer.flush()
+
+    # Compute analytics
+    artist_ms = defaultdict(int)
+    track_ms = defaultdict(int)
+    year_ms = defaultdict(int)
+    hour_counts = defaultdict(int)
+    platform_counts = defaultdict(int)
+    skipped_artists = defaultdict(int)
+    total_ms = 0
+
+    for e in all_events:
+        ms = e.get("ms_played", 0) or 0
+        artist = e.get("master_metadata_album_artist_name") or ""
+        track = e.get("master_metadata_track_name") or ""
+        ts = e.get("ts", "")
+        platform = e.get("platform", "unknown") or "unknown"
+        skipped = e.get("skipped", False)
+
+        if not artist and not track:
+            continue
+
+        total_ms += ms
+        if artist:
+            artist_ms[artist] += ms
+        if track and artist:
+            track_ms[f"{track} — {artist}"] += ms
+
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                year_ms[dt.year] += ms
+                hour_counts[dt.hour] += 1
+            except ValueError:
+                pass
+
+        platform_counts[platform] += 1
+
+        if skipped and artist:
+            skipped_artists[artist] += 1
+
+    # Build results
+    analytics = {
+        "total_hours": round(total_ms / 3_600_000, 1),
+        "total_events": len(all_events),
+        "top_artists": sorted(artist_ms.items(), key=lambda x: -x[1])[:10],
+        "top_tracks": sorted(track_ms.items(), key=lambda x: -x[1])[:10],
+        "hours_by_year": sorted(year_ms.items()),
+        "hour_of_day": [hour_counts.get(h, 0) for h in range(24)],
+        "platforms": sorted(platform_counts.items(), key=lambda x: -x[1])[:8],
+        "most_skipped": sorted(skipped_artists.items(), key=lambda x: -x[1])[:10],
+    }
+
+    # Convert ms to hours for display
+    analytics["top_artists"] = [(a, round(ms / 3_600_000, 1)) for a, ms in analytics["top_artists"]]
+    analytics["top_tracks"] = [(t, round(ms / 3_600_000, 1)) for t, ms in analytics["top_tracks"]]
+    analytics["hours_by_year"] = [(y, round(ms / 3_600_000, 1)) for y, ms in analytics["hours_by_year"]]
+
+    # Store in temp file
+    session_id = str(uuid.uuid4())
+    tmp_path = os.path.join(tempfile.gettempdir(), f"spotify_{session_id}.json")
+    with open(tmp_path, "w") as f:
+        json.dump(analytics, f)
+    session["analytics_file"] = tmp_path
+
+    return redirect(url_for("personal"))
+
+
+@app.route("/personal")
+def personal():
+    tmp_path = session.get("analytics_file")
+    if not tmp_path or not os.path.exists(tmp_path):
+        return redirect(url_for("upload_page"))
+
+    with open(tmp_path) as f:
+        analytics = json.load(f)
+
+    return render_template("personal.html", analytics=analytics)
 
 
 if __name__ == "__main__":
