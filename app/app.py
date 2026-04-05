@@ -1,10 +1,8 @@
 import os
 import json
-import uuid
-import tempfile
 from collections import defaultdict
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from flask import Flask, render_template, request, jsonify
 import mysql.connector
 from pyhive import hive
 from kafka import KafkaProducer
@@ -177,38 +175,28 @@ def artist_page(name):
     return render_template("artist.html", artist=artist, tracks=tracks, stats=stats)
 
 
-@app.route("/upload", methods=["GET"])
+@app.route("/upload")
 def upload_page():
     return render_template("upload.html")
 
 
-@app.route("/upload", methods=["POST"])
-def upload():
-    files = request.files.getlist("files")
-    if not files:
-        return redirect(url_for("upload_page"))
+def consume_all_events():
+    """Read all events from Kafka topic spotify-personal."""
+    from kafka import KafkaConsumer
+    consumer = KafkaConsumer(
+        "spotify-personal",
+        bootstrap_servers=KAFKA_BOOTSTRAP,
+        auto_offset_reset="earliest",
+        consumer_timeout_ms=5000,
+        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+    )
+    events = [msg.value for msg in consumer]
+    consumer.close()
+    return events
 
-    # Parse all events from all uploaded JSON files
-    all_events = []
-    for f in files:
-        try:
-            data = json.load(f)
-            if isinstance(data, list):
-                all_events.extend(data)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            continue
 
-    if not all_events:
-        return redirect(url_for("upload_page"))
-
-    # Send events to Kafka topic "spotify-personal"
-    producer = get_producer()
-    if producer:
-        for event in all_events:
-            producer.send("spotify-personal", event)
-        producer.flush()
-
-    # Compute analytics
+def compute_analytics(all_events):
+    """Compute personal analytics from a list of streaming events."""
     artist_ms = defaultdict(int)
     track_ms = defaultdict(int)
     year_ms = defaultdict(int)
@@ -247,7 +235,6 @@ def upload():
         if skipped and artist:
             skipped_artists[artist] += 1
 
-    # Build results
     analytics = {
         "total_hours": round(total_ms / 3_600_000, 1),
         "total_events": len(all_events),
@@ -259,31 +246,56 @@ def upload():
         "most_skipped": sorted(skipped_artists.items(), key=lambda x: -x[1])[:10],
     }
 
-    # Convert ms to hours for display
     analytics["top_artists"] = [(a, round(ms / 3_600_000, 1)) for a, ms in analytics["top_artists"]]
     analytics["top_tracks"] = [(t, round(ms / 3_600_000, 1)) for t, ms in analytics["top_tracks"]]
     analytics["hours_by_year"] = [(y, round(ms / 3_600_000, 1)) for y, ms in analytics["hours_by_year"]]
 
-    # Store in temp file
-    session_id = str(uuid.uuid4())
-    tmp_path = os.path.join(tempfile.gettempdir(), f"spotify_{session_id}.json")
-    with open(tmp_path, "w") as f:
-        json.dump(analytics, f)
-    session["analytics_file"] = tmp_path
-
-    return redirect(url_for("personal"))
+    return analytics
 
 
 @app.route("/personal")
 def personal():
-    tmp_path = session.get("analytics_file")
-    if not tmp_path or not os.path.exists(tmp_path):
-        return redirect(url_for("upload_page"))
+    try:
+        events = consume_all_events()
+    except Exception:
+        events = []
 
-    with open(tmp_path) as f:
-        analytics = json.load(f)
+    if not events:
+        return render_template("personal.html", analytics=None)
 
+    analytics = compute_analytics(events)
     return render_template("personal.html", analytics=analytics)
+
+
+@app.route("/kafka-preview")
+def kafka_preview():
+    from kafka import KafkaConsumer
+    try:
+        consumer = KafkaConsumer(
+            "spotify-personal",
+            bootstrap_servers=KAFKA_BOOTSTRAP,
+            auto_offset_reset="latest",
+            consumer_timeout_ms=3000,
+            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+        )
+        # Seek to end minus 10 messages
+        consumer.poll(timeout_ms=1000)
+        partitions = consumer.assignment()
+        for tp in partitions:
+            end = consumer.end_offsets([tp])[tp]
+            start = max(0, end - 10)
+            consumer.seek(tp, start)
+
+        messages = []
+        for msg in consumer:
+            messages.append(msg.value)
+            if len(messages) >= 10:
+                break
+        consumer.close()
+    except Exception:
+        messages = []
+
+    return jsonify(messages)
 
 
 if __name__ == "__main__":

@@ -1,119 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Upload Your Spotify Data{% endblock %}
 
-{% block extra_head %}
-<style>
-    .drop-zone {
-        border: 2px dashed var(--text-muted);
-        border-radius: 16px;
-        padding: 60px 40px;
-        text-align: center;
-        cursor: pointer;
-        transition: border-color 0.3s, background 0.3s;
-        margin-bottom: 24px;
-    }
-    .drop-zone:hover,
-    .drop-zone.dragover {
-        border-color: var(--green);
-        background: rgba(29, 185, 84, 0.05);
-    }
-    .drop-zone input[type="file"] {
-        display: none;
-    }
-    .drop-zone .icon {
-        font-size: 3rem;
-        margin-bottom: 16px;
-        display: block;
-    }
-    .file-list {
-        list-style: none;
-        padding: 0;
-        margin: 16px 0;
-    }
-    .file-list li {
-        padding: 8px 16px;
-        background: var(--bg-card);
-        border-radius: 8px;
-        margin-bottom: 8px;
-        display: flex;
-        justify-content: space-between;
-        color: var(--text-secondary);
-        font-size: 0.9rem;
-    }
-    .file-list li .name { color: var(--text); }
-</style>
-{% endblock %}
-
 {% block content %}
-<div style="max-width: 600px; margin: 0 auto; padding-top: 40px;">
-    <h1 style="text-align:center; margin-bottom: 8px;">Upload Your Spotify Data</h1>
-    <p style="text-align:center; color: var(--text-secondary); margin-bottom: 32px;">
-        Upload your <strong>Extended Streaming History</strong> JSON files from Spotify's privacy export
+<div style="max-width: 600px; margin: 0 auto; padding-top: 60px; text-align:center;">
+    <h1 style="margin-bottom: 16px;">Your Spotify Analytics</h1>
+    <p style="color: var(--text-secondary); margin-bottom: 40px;">
+        Analyze your personal Spotify streaming history from Kafka
     </p>
 
-    <form action="/upload" method="POST" enctype="multipart/form-data" id="uploadForm">
-        <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
-            <span class="icon">&#128190;</span>
-            <p style="font-size: 1.1rem; margin-bottom: 8px;">Drop your JSON files here</p>
-            <p style="color: var(--text-muted); font-size: 0.85rem;">or click to browse</p>
-            <input type="file" name="files" id="fileInput" multiple accept=".json">
-        </div>
+    <a href="/personal" class="btn" style="display:inline-block; text-decoration:none; font-size:1.1rem; padding:16px 48px;">
+        Load My Analytics
+    </a>
 
-        <ul class="file-list" id="fileList" style="display:none;"></ul>
-
-        <button type="submit" class="btn" id="submitBtn" style="width:100%; display:none;">
-            Analyze My Data
-        </button>
-    </form>
-
-    <div class="card" style="margin-top: 32px; padding: 20px;">
-        <h3 style="margin-bottom: 12px; font-size: 0.95rem;">How to get your data</h3>
-        <ol style="color: var(--text-secondary); font-size: 0.85rem; padding-left: 20px; line-height: 1.8;">
-            <li>Go to <strong>spotify.com/account/privacy</strong></li>
-            <li>Request your <strong>Extended Streaming History</strong></li>
-            <li>Wait for the email (can take up to 30 days)</li>
-            <li>Download and extract the ZIP</li>
-            <li>Upload the <strong>Streaming_History_Audio_*.json</strong> files here</li>
-        </ol>
-    </div>
+    <p style="color: var(--text-muted); margin-top: 24px; font-size: 0.85rem;">
+        Make sure to run <code style="color:var(--green);">python kafka/producer.py</code> first
+    </p>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-const dropZone = document.getElementById('dropZone');
-const fileInput = document.getElementById('fileInput');
-const fileList = document.getElementById('fileList');
-const submitBtn = document.getElementById('submitBtn');
-
-function showFiles(files) {
-    fileList.innerHTML = '';
-    fileList.style.display = 'block';
-    submitBtn.style.display = 'block';
-    for (const f of files) {
-        const size = (f.size / 1024 / 1024).toFixed(1);
-        const li = document.createElement('li');
-        li.innerHTML = `<span class="name">${f.name}</span><span>${size} MB</span>`;
-        fileList.appendChild(li);
-    }
-}
-
-fileInput.addEventListener('change', () => showFiles(fileInput.files));
-
-dropZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropZone.classList.add('dragover');
-});
-
-dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('dragover');
-});
-
-dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('dragover');
-    fileInput.files = e.dataTransfer.files;
-    showFiles(e.dataTransfer.files);
-});
-</script>
 {% endblock %}
