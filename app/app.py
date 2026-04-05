@@ -1,5 +1,7 @@
 import os
 import json
+from collections import defaultdict
+from datetime import datetime
 from flask import Flask, render_template, request, jsonify
 import mysql.connector
 from pyhive import hive
@@ -173,11 +175,127 @@ def artist_page(name):
     return render_template("artist.html", artist=artist, tracks=tracks, stats=stats)
 
 
-@app.route("/play", methods=["POST"])
-def play():
-    data = request.get_json()
-    send_event("play", {"track": data.get("track"), "artist": data.get("artist")})
-    return jsonify({"status": "ok"})
+@app.route("/upload")
+def upload_page():
+    return render_template("upload.html")
+
+
+def consume_all_events():
+    """Read all events from Kafka topic spotify-personal."""
+    from kafka import KafkaConsumer
+    consumer = KafkaConsumer(
+        "spotify-personal",
+        bootstrap_servers=KAFKA_BOOTSTRAP,
+        auto_offset_reset="earliest",
+        consumer_timeout_ms=5000,
+        value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+    )
+    events = [msg.value for msg in consumer]
+    consumer.close()
+    return events
+
+
+def compute_analytics(all_events):
+    """Compute personal analytics from a list of streaming events."""
+    artist_ms = defaultdict(int)
+    track_ms = defaultdict(int)
+    year_ms = defaultdict(int)
+    hour_counts = defaultdict(int)
+    platform_counts = defaultdict(int)
+    skipped_artists = defaultdict(int)
+    total_ms = 0
+
+    for e in all_events:
+        ms = e.get("ms_played", 0) or 0
+        artist = e.get("master_metadata_album_artist_name") or ""
+        track = e.get("master_metadata_track_name") or ""
+        ts = e.get("ts", "")
+        platform = e.get("platform", "unknown") or "unknown"
+        skipped = e.get("skipped", False)
+
+        if not artist and not track:
+            continue
+
+        total_ms += ms
+        if artist:
+            artist_ms[artist] += ms
+        if track and artist:
+            track_ms[f"{track} — {artist}"] += ms
+
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                year_ms[dt.year] += ms
+                hour_counts[dt.hour] += 1
+            except ValueError:
+                pass
+
+        platform_counts[platform] += 1
+
+        if skipped and artist:
+            skipped_artists[artist] += 1
+
+    analytics = {
+        "total_hours": round(total_ms / 3_600_000, 1),
+        "total_events": len(all_events),
+        "top_artists": sorted(artist_ms.items(), key=lambda x: -x[1])[:10],
+        "top_tracks": sorted(track_ms.items(), key=lambda x: -x[1])[:10],
+        "hours_by_year": sorted(year_ms.items()),
+        "hour_of_day": [hour_counts.get(h, 0) for h in range(24)],
+        "platforms": sorted(platform_counts.items(), key=lambda x: -x[1])[:8],
+        "most_skipped": sorted(skipped_artists.items(), key=lambda x: -x[1])[:10],
+    }
+
+    analytics["top_artists"] = [(a, round(ms / 3_600_000, 1)) for a, ms in analytics["top_artists"]]
+    analytics["top_tracks"] = [(t, round(ms / 3_600_000, 1)) for t, ms in analytics["top_tracks"]]
+    analytics["hours_by_year"] = [(y, round(ms / 3_600_000, 1)) for y, ms in analytics["hours_by_year"]]
+
+    return analytics
+
+
+@app.route("/personal")
+def personal():
+    try:
+        events = consume_all_events()
+    except Exception:
+        events = []
+
+    if not events:
+        return render_template("personal.html", analytics=None)
+
+    analytics = compute_analytics(events)
+    return render_template("personal.html", analytics=analytics)
+
+
+@app.route("/kafka-preview")
+def kafka_preview():
+    from kafka import KafkaConsumer
+    try:
+        consumer = KafkaConsumer(
+            "spotify-personal",
+            bootstrap_servers=KAFKA_BOOTSTRAP,
+            auto_offset_reset="latest",
+            consumer_timeout_ms=3000,
+            value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+        )
+        # Seek to end minus 10 messages
+        consumer.poll(timeout_ms=1000)
+        partitions = consumer.assignment()
+        for tp in partitions:
+            end = consumer.end_offsets([tp])[tp]
+            start = max(0, end - 10)
+            consumer.seek(tp, start)
+
+        messages = []
+        for msg in consumer:
+            messages.append(msg.value)
+            if len(messages) >= 10:
+                break
+        consumer.close()
+    except Exception:
+        messages = []
+
+    return jsonify(messages)
 
 
 if __name__ == "__main__":

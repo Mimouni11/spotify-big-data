@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}Your Listening Analytics{% endblock %}
+
+{% block content %}
+{% if not analytics %}
+<div class="card" style="text-align:center; padding:60px; margin-top:40px;">
+    <h2>No data in Kafka yet</h2>
+    <p style="color:var(--text-secondary); margin-top:8px;">Run <code style="color:var(--green);">python kafka/producer.py</code> first to stream your data</p>
+    <a href="/upload" class="btn" style="display:inline-block; margin-top:16px; text-decoration:none;">Back</a>
+</div>
+{% else %}
+<!-- Header -->
+<div style="text-align:center; padding: 32px 0 24px;">
+    <h1 style="font-size: 2.2rem; margin-bottom: 8px;">Your Spotify Wrapped</h1>
+    <p style="color: var(--text-secondary);">
+        {{ analytics.total_events | int }} listening events &middot; {{ analytics.total_hours }} hours total
+    </p>
+</div>
+
+<!-- Kafka Live Console -->
+<div class="card" style="margin-bottom:24px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h2 class="section-title" style="margin-bottom:0;">
+            <span id="kafkaDot" style="display:inline-block; width:10px; height:10px; border-radius:50%;
+                  background:var(--green); margin-right:8px; animation: blink 1s infinite;"></span>
+            Kafka Stream — spotify-personal
+        </h2>
+        <button class="btn btn-sm" onclick="loadKafkaFeed()">Refresh</button>
+    </div>
+    <div id="kafkaFeed" style="background:var(--bg); border-radius:8px; padding:16px; max-height:300px;
+         overflow-y:auto; font-family:monospace; font-size:0.8rem;">
+        <span style="color:var(--text-muted);">Click Refresh to consume latest events...</span>
+    </div>
+</div>
+
+<style>
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+</style>
+
+<!-- Stat Cards -->
+<div class="card-grid" style="margin-bottom: 24px;">
+    <div class="stat-card">
+        <div class="value">{{ analytics.total_hours }}</div>
+        <div class="label">Hours Listened</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{ analytics.top_artists | length }}</div>
+        <div class="label">Top Artists</div>
+    </div>
+    <div class="stat-card">
+        <div class="value">{{ analytics.total_events | int }}</div>
+        <div class="label">Total Plays</div>
+    </div>
+</div>
+
+<!-- Row 1: Top Artists + Top Tracks -->
+<div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:16px;">
+    <div class="card">
+        <h2 class="section-title">Top 10 Artists</h2>
+        <canvas id="artistsChart"></canvas>
+    </div>
+    <div class="card">
+        <h2 class="section-title">Top 10 Tracks</h2>
+        <canvas id="tracksChart"></canvas>
+    </div>
+</div>
+
+<!-- Row 2: Hours by Year + Platform -->
+<div style="display:grid; grid-template-columns: 2fr 1fr; gap:16px; margin-bottom:16px;">
+    <div class="card">
+        <h2 class="section-title">Listening Hours by Year</h2>
+        <canvas id="yearChart"></canvas>
+    </div>
+    <div class="card">
+        <h2 class="section-title">Platforms</h2>
+        <canvas id="platformChart"></canvas>
+    </div>
+</div>
+
+<!-- Row 3: Hour of Day + Most Skipped -->
+<div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:16px;">
+    <div class="card">
+        <h2 class="section-title">Listening by Hour of Day</h2>
+        <canvas id="hourChart"></canvas>
+    </div>
+    <div class="card">
+        <h2 class="section-title">Most Skipped Artists</h2>
+        <canvas id="skippedChart"></canvas>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if analytics %}
+<script>
+function loadKafkaFeed() {
+    const feed = document.getElementById('kafkaFeed');
+    feed.innerHTML = '<span style="color:var(--green);">Consuming from Kafka...</span>';
+    fetch('/kafka-preview')
+        .then(r => r.json())
+        .then(events => {
+            if (events.length === 0) {
+                feed.innerHTML = '<span style="color:var(--text-muted);">No events in topic.</span>';
+                return;
+            }
+            feed.innerHTML = '';
+            events.forEach((e, i) => {
+                const track = e.master_metadata_track_name || e.episode_name || 'Unknown';
+                const artist = e.master_metadata_album_artist_name || '';
+                const time = e.ts || '';
+                const div = document.createElement('div');
+                div.style.cssText = 'padding:8px 12px; margin-bottom:4px; border-left:2px solid var(--green); opacity:0; transform:translateX(-10px); transition: all 0.3s;';
+                div.innerHTML = `<span style="color:var(--green);">[${time}]</span> <span style="color:var(--text);">${track}</span>${artist ? ` <span style="color:var(--text-muted);">— ${artist}</span>` : ''} <span style="color:var(--text-muted);">(${(e.ms_played/1000).toFixed(0)}s${e.skipped ? ', <span style=color:#E74C3C>skipped</span>' : ''})</span>`;
+                feed.appendChild(div);
+                setTimeout(() => { div.style.opacity = '1'; div.style.transform = 'translateX(0)'; }, i * 80);
+            });
+            feed.scrollTop = feed.scrollHeight;
+        })
+        .catch(() => {
+            feed.innerHTML = '<span style="color:#E74C3C;">Failed to connect to Kafka</span>';
+        });
+}
+
+// Auto-load on page load
+loadKafkaFeed();
+
+const a = {{ analytics | tojson }};
+
+const chartColors = ['#1DB954','#E74C3C','#3498DB','#F39C12','#9B59B6','#1ABC9C','#E67E22','#2ECC71','#E91E63','#00BCD4'];
+
+// ── Top Artists ──
+new Chart(document.getElementById('artistsChart'), {
+    type: 'bar',
+    data: {
+        labels: a.top_artists.map(x => x[0]),
+        datasets: [{
+            data: a.top_artists.map(x => x[1]),
+            backgroundColor: chartColors,
+            borderRadius: 6,
+        }]
+    },
+    options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { title: { display: true, text: 'Hours', color: '#B3B3B3' }, ticks: { color: '#B3B3B3' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { ticks: { color: '#B3B3B3', font: { size: 11 } }, grid: { display: false } }
+        }
+    }
+});
+
+// ── Top Tracks ──
+new Chart(document.getElementById('tracksChart'), {
+    type: 'bar',
+    data: {
+        labels: a.top_tracks.map(x => {
+            const name = x[0].split(' — ')[0];
+            return name.length > 30 ? name.slice(0, 30) + '...' : name;
+        }),
+        datasets: [{
+            data: a.top_tracks.map(x => x[1]),
+            backgroundColor: chartColors,
+            borderRadius: 6,
+        }]
+    },
+    options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { title: { display: true, text: 'Hours', color: '#B3B3B3' }, ticks: { color: '#B3B3B3' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { ticks: { color: '#B3B3B3', font: { size: 10 } }, grid: { display: false } }
+        }
+    }
+});
+
+// ── Hours by Year ──
+new Chart(document.getElementById('yearChart'), {
+    type: 'line',
+    data: {
+        labels: a.hours_by_year.map(x => x[0]),
+        datasets: [{
+            label: 'Hours',
+            data: a.hours_by_year.map(x => x[1]),
+            borderColor: '#1DB954',
+            backgroundColor: 'rgba(29, 185, 84, 0.15)',
+            fill: true,
+            tension: 0.3,
+            pointBackgroundColor: '#1DB954',
+            pointRadius: 5,
+            borderWidth: 2,
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { ticks: { color: '#B3B3B3' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { title: { display: true, text: 'Hours', color: '#B3B3B3' }, ticks: { color: '#B3B3B3' }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: true }
+        }
+    }
+});
+
+// ── Platform Breakdown ──
+new Chart(document.getElementById('platformChart'), {
+    type: 'doughnut',
+    data: {
+        labels: a.platforms.map(x => x[0]),
+        datasets: [{
+            data: a.platforms.map(x => x[1]),
+            backgroundColor: chartColors,
+            borderWidth: 0,
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: {
+            legend: { position: 'bottom', labels: { color: '#B3B3B3', font: { size: 10 }, boxWidth: 12, padding: 8 } }
+        }
+    }
+});
+
+// ── Hour of Day ──
+const hourLabels = Array.from({length: 24}, (_, i) => `${i}:00`);
+new Chart(document.getElementById('hourChart'), {
+    type: 'bar',
+    data: {
+        labels: hourLabels,
+        datasets: [{
+            data: a.hour_of_day,
+            backgroundColor: a.hour_of_day.map((v, i) => {
+                const max = Math.max(...a.hour_of_day);
+                const intensity = max > 0 ? v / max : 0;
+                return `rgba(29, 185, 84, ${0.2 + intensity * 0.8})`;
+            }),
+            borderRadius: 4,
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { ticks: { color: '#B3B3B3', font: { size: 9 } }, grid: { display: false } },
+            y: { title: { display: true, text: 'Plays', color: '#B3B3B3' }, ticks: { color: '#B3B3B3' }, grid: { color: 'rgba(255,255,255,0.05)' }, beginAtZero: true }
+        }
+    }
+});
+
+// ── Most Skipped ──
+new Chart(document.getElementById('skippedChart'), {
+    type: 'bar',
+    data: {
+        labels: a.most_skipped.map(x => x[0]),
+        datasets: [{
+            data: a.most_skipped.map(x => x[1]),
+            backgroundColor: '#E74C3C',
+            borderRadius: 6,
+        }]
+    },
+    options: {
+        indexAxis: 'y',
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { title: { display: true, text: 'Skips', color: '#B3B3B3' }, ticks: { color: '#B3B3B3' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { ticks: { color: '#B3B3B3', font: { size: 11 } }, grid: { display: false } }
+        }
+    }
+});
+</script>
+{% endif %}
+{% endblock %}

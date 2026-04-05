@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Upload Your Spotify Data{% endblock %}
+
+{% block content %}
+<div style="max-width: 600px; margin: 0 auto; padding-top: 60px; text-align:center;">
+    <h1 style="margin-bottom: 16px;">Your Spotify Analytics</h1>
+    <p style="color: var(--text-secondary); margin-bottom: 40px;">
+        Analyze your personal Spotify streaming history from Kafka
+    </p>
+
+    <a href="/personal" class="btn" style="display:inline-block; text-decoration:none; font-size:1.1rem; padding:16px 48px;">
+        Load My Analytics
+    </a>
+
+    <p style="color: var(--text-muted); margin-top: 24px; font-size: 0.85rem;">
+        Make sure to run <code style="color:var(--green);">python kafka/producer.py</code> first
+    </p>
+</div>
+{% endblock %}

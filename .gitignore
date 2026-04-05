@@ -19,3 +19,10 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Personal Spotify data
+Spotify Extended Streaming History/
+StreamingHistory_podcast_0.json
+Userdata.json
+Wrapped2024.json
+YourSoundCapsule.json
