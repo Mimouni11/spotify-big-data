@@ -223,25 +223,30 @@ services:
 
   # ── 9. Flume ────────────────────────────────
   flume:
-    image: probablyfine/flume:latest
+    build:
+      context: ./flume
+      dockerfile: Dockerfile
     container_name: spotify_flume
     restart: unless-stopped
-    volumes:
-      - ./flume/flume-agent.conf:/opt/flume/conf/flume-agent.conf:ro
-      - nginx_logs:/var/log/nginx              # reads Nginx access.log from here
     environment:
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - FLUME_AGENT_NAME=agent
+      - FLUME_CONF_FILE=/opt/flume-config/flume.conf
+    volumes:
+      - ./flume/flume-agent.conf:/opt/flume-config/flume.conf:ro
+      - ./flume/log4j.properties:/opt/flume-config/log4j.properties:ro
+      - nginx_logs:/var/log/nginx
+    command: >
+      /usr/local/apache-flume/apache-flume-1.7.0-SNAPSHOT-bin/bin/flume-ng agent
+      --conf /opt/flume-config
+      --conf-file /opt/flume-config/flume.conf
+      --name agent
+      -Dflume.root.logger=INFO,console
     networks:
       - spotify-net
     depends_on:
       - namenode
       - nginx
-    command: >
-      flume-ng agent
-      --conf /opt/flume/conf
-      --conf-file /opt/flume/conf/flume-agent.conf
-      --name agent
-      -Dflume.root.logger=INFO,console
 
   # ── 10. Hive ────────────────────────────────
   hive:
